@@ -30,19 +30,19 @@ An institutional-grade session tracking asset engineered in **Pine Script v6** f
 ### 3. Asian Range & Equity Open Overlays
 ![Chart View 1](S3.png)
 
-### 4. Risk-to-Reward Matrix Display
+### 4. Table Display Bullish Bearish
 ![Risk Settings](S4.png)
 
-### 5. Discord Webhook Automation Panel
+### 5. 
 ![Discord Alert Settings](S5.png)
 
 ### 6. Macro Execution Window Preview
-![Chart View 2](S5.1.png)
+![Chart View 2](S 5.1.png)
 
 ### 7. Custom Color & Opacity Themes
-![Theme Settings](S5.2.png)
+![Theme Settings](S 5.2.png)
 
 ### 8. Historical Session Back-Data View
-![Backdata Settings](S5.3.png)
+![Backdata Settings](S 5.3.png)
 
 </details>

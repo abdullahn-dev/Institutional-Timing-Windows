@@ -16,3 +16,33 @@ An institutional-grade session tracking asset engineered in **Pine Script v6** f
 * **Language:** Pine Script v6[cite: 2]
 * **Platform:** TradingView[cite: 2]
 * **Methodologies:** Smart Money Concepts (SMC), Market Microstructure, Algorithmic Time Architecture
+* ## 📸 Indicator Previews & Configuration Settings
+
+<details>
+<summary>🔍 Click here to view all 8 Settings & Chart Previews</summary>
+
+### 1. Institutional Timeframes HUD
+![HUD Setup](S1.png)
+
+### 2. Silver Bullet & Killzone Configurations
+![Session Settings](S2.png)
+
+### 3. Asian Range & Equity Open Overlays
+![Chart View 1](S3.png)
+
+### 4. Risk-to-Reward Matrix Display
+![Risk Settings](S4.png)
+
+### 5. Discord Webhook Automation Panel
+![Discord Alert Settings](S5.png)
+
+### 6. Macro Execution Window Preview
+![Chart View 2](S5.1.png)
+
+### 7. Custom Color & Opacity Themes
+![Theme Settings](S5.2.png)
+
+### 8. Historical Session Back-Data View
+![Backdata Settings](S5.3.png)
+
+</details>

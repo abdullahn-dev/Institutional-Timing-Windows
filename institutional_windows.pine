@@ -1,0 +1,260 @@
+//@version=6
+indicator("Institutional Timing Windows (NY → Local, 12-hour format) - v6 (final fix)", shorttitle="InstWindows (NY→Local)", overlay=true)
+
+// =========================
+// == User Inputs / Config ==
+showPastDays    = input.int(0, "Show past X days (0 = only today)", minval=0, maxval=60)
+
+// global style inputs (constant defaults)
+globalOpacity   = input.int(85, "Default Opacity (0-100)", minval=0, maxval=100)
+globalLineWidth = input.int(1, "Default Line Width", minval=1, maxval=6)
+
+// Per-session toggles
+sess_SB_PM_enable      = input.bool(true, "Silver Bullet PM (2:00–3:00 PM NY)")
+sess_SB_AM_enable      = input.bool(true, "Silver Bullet AM (10:00–11:00 AM NY)")
+sess_LondonSB_enable   = input.bool(true, "London Silver Bullet (3:00–4:00 AM NY)")
+sess_EquityOpen_enable = input.bool(true, "Equity Open Model (9:30 AM NY line)")
+sess_AsianRange_enable = input.bool(true, "Asian Range (8:00 PM–12:00 AM NY)")
+sess_LondonKill_enable = input.bool(true, "London Killzone (2:00–5:00 AM NY)")
+sess_LondonClose_enable= input.bool(true, "London Close (10:00–11:00 AM NY)")
+sess_NY_AMK_enable     = input.bool(true, "NY AM Killzone (7:00–10:00 AM NY)")
+sess_NY_PMK_enable     = input.bool(true, "NY PM Killzone (1:00–3:00 PM NY)")
+sess_NY_Lunch_enable   = input.bool(true, "NY Lunch (11:00 AM–1:00 PM NY)")
+
+// --- Base color inputs (must be const colors) ---
+sess_SB_PM_color_base       = input.color(color.red,     "SB PM Base Color")
+sess_SB_AM_color_base       = input.color(color.orange,  "SB AM Base Color")
+sess_LondonSB_color_base    = input.color(color.purple,  "London SB Base Color")
+sess_EquityOpen_color_base  = input.color(color.yellow,  "Equity Open Base Color")
+sess_AsianRange_color_base  = input.color(color.blue,    "Asian Range Base Color")
+sess_LondonKill_color_base  = input.color(color.teal,    "London Kill Base Color")
+sess_LondonClose_color_base = input.color(color.fuchsia, "London Close Base Color")
+sess_NY_AMK_color_base      = input.color(color.green,   "NY AM Kill Base Color")
+sess_NY_PMK_color_base      = input.color(color.maroon,  "NY PM Kill Base Color")
+sess_NY_Lunch_color_base    = input.color(color.gray,    "NY Lunch Base Color")
+
+// Box fill opacity (constant default). If you want it to follow globalOpacity, set `boxFillOpacity = globalOpacity`.
+boxFillOpacity = input.int(85, "Box Fill Opacity (0-100)", minval=0, maxval=100)
+
+// Compute runtime colors used for box fill and borders (apply chosen fill opacity)
+sess_SB_PM_color       = color.new(sess_SB_PM_color_base, 100 - boxFillOpacity)
+sess_SB_AM_color       = color.new(sess_SB_AM_color_base, 100 - boxFillOpacity)
+sess_LondonSB_color    = color.new(sess_LondonSB_color_base, 100 - boxFillOpacity)
+sess_EquityOpen_color  = color.new(sess_EquityOpen_color_base, 0)  // keep equity open line opaque by default
+sess_AsianRange_color  = color.new(sess_AsianRange_color_base, 100 - boxFillOpacity)
+sess_LondonKill_color  = color.new(sess_LondonKill_color_base, 100 - boxFillOpacity)
+sess_LondonClose_color = color.new(sess_LondonClose_color_base, 100 - boxFillOpacity)
+sess_NY_AMK_color      = color.new(sess_NY_AMK_color_base, 100 - boxFillOpacity)
+sess_NY_PMK_color      = color.new(sess_NY_PMK_color_base, 100 - boxFillOpacity)
+sess_NY_Lunch_color    = color.new(sess_NY_Lunch_color_base, 100 - boxFillOpacity)
+
+// Aesthetics
+boxBorderWidth = input.int(1, "Box Border Width", minval=0, maxval=4)
+
+// =========================
+// == Internal utilities ==
+
+// bar time (ms)
+barTime = time
+
+// compute approximate vertical span for boxes using cached extremes
+var float cachedHigh = na
+var float cachedLow  = na
+if barstate.isfirst
+    cachedHigh := high
+    cachedLow  := low
+else
+    cachedHigh := math.max(cachedHigh, high)
+    cachedLow  := math.min(cachedLow, low)
+spanHigh = cachedHigh * 1.02 + syminfo.mintick * 10
+spanLow  = cachedLow  * 0.98 - syminfo.mintick * 10
+
+// create a box when current bar enters [start_ts, end_ts)
+f_create_box(start_ts, end_ts, fill_color, border_color) =>
+    var box b = na
+    if (barTime >= start_ts) and (barTime < end_ts)
+        // NOTE: box.new has no 'yloc' parameter — top/bottom are price coordinates by default
+        b := box.new(left = start_ts, top = spanHigh, right = end_ts, bottom = spanLow, xloc = xloc.bar_time, border_width = boxBorderWidth, border_color = border_color, bgcolor = fill_color)
+    b
+
+// create a vertical line at exact timestamp moment (drawn on the bar that contains that moment)
+// --- FIX: declare barDur with a concrete float type (avoid assigning NA to an untyped var) ---
+f_create_vline(ts_inst, col, width) =>
+    var line ln = na
+    // safely compute bar duration (ms) — time[1] may be na on first bar
+    float barDur = math.max(1, barTime - nz(time[1], barTime))
+    if (barTime >= ts_inst) and (barTime - barDur < ts_inst)
+        ln := line.new(x1 = ts_inst, y1 = spanHigh, x2 = ts_inst, y2 = spanLow, xloc = xloc.bar_time, extend = extend.none, color = col, width = width)
+    ln
+
+// date components (chart time)
+curYear  = year(time)
+curMonth = month(time)
+curDay   = dayofmonth(time)
+msDay    = 24 * 60 * 60 * 1000
+
+// get NY timestamp for a calendar day offset and hh:mm in NY
+f_ts_for_day(offsetDays, hh, mm) =>
+    baseMidnightNY = timestamp("America/New_York", curYear, curMonth, curDay, 0, 0)
+    dayBase = baseMidnightNY - offsetDays * msDay
+    y_ = year(dayBase)
+    m_ = month(dayBase)
+    d_ = dayofmonth(dayBase)
+    timestamp("America/New_York", y_, m_, d_, hh, mm)
+
+// =========================
+// == Create Session Objects ==
+var box[]  createdBoxes = array.new_box()
+var line[] createdLines = array.new_line()
+
+f_add_box(b) =>
+    if not na(b)
+        array.push(createdBoxes, b)
+
+f_add_line(l) =>
+    if not na(l)
+        array.push(createdLines, l)
+
+// iterate days (0 = today, 1 = yesterday, ...)
+for i = 0 to showPastDays
+    // Silver Bullet PM: 2–3 PM NY
+    if sess_SB_PM_enable
+        start_ts = f_ts_for_day(i, 14, 00)
+        end_ts   = f_ts_for_day(i, 15, 00)
+        b = f_create_box(start_ts, end_ts, sess_SB_PM_color, sess_SB_PM_color)
+        f_add_box(b)
+
+    // Silver Bullet AM: 10–11 AM NY
+    if sess_SB_AM_enable
+        start_ts = f_ts_for_day(i, 10, 00)
+        end_ts   = f_ts_for_day(i, 11, 00)
+        b = f_create_box(start_ts, end_ts, sess_SB_AM_color, sess_SB_AM_color)
+        f_add_box(b)
+
+    // London Silver Bullet: 3–4 AM NY
+    if sess_LondonSB_enable
+        start_ts = f_ts_for_day(i, 3, 00)
+        end_ts   = f_ts_for_day(i, 4, 00)
+        b = f_create_box(start_ts, end_ts, sess_LondonSB_color, sess_LondonSB_color)
+        f_add_box(b)
+
+    // Equity Open: 9:30 AM NY (vertical line)
+    if sess_EquityOpen_enable
+        vts = f_ts_for_day(i, 9, 30)
+        ln = f_create_vline(vts, sess_EquityOpen_color, globalLineWidth)
+        f_add_line(ln)
+
+    // Asian Range: 8 PM – 12 AM NY (midnight next day)
+    if sess_AsianRange_enable
+        start_ts = f_ts_for_day(i, 20, 00)
+        dayMid   = f_ts_for_day(i, 0, 0)  // midnight of that NY day
+        end_ts   = dayMid + msDay         // midnight next day
+        b = f_create_box(start_ts, end_ts, sess_AsianRange_color, sess_AsianRange_color)
+        f_add_box(b)
+
+    // London Killzone: 2–5 AM NY
+    if sess_LondonKill_enable
+        start_ts = f_ts_for_day(i, 2, 00)
+        end_ts   = f_ts_for_day(i, 5, 00)
+        b = f_create_box(start_ts, end_ts, sess_LondonKill_color, sess_LondonKill_color)
+        f_add_box(b)
+
+    // London Close: 10–11 AM NY
+    if sess_LondonClose_enable
+        start_ts = f_ts_for_day(i, 10, 00)
+        end_ts   = f_ts_for_day(i, 11, 00)
+        b = f_create_box(start_ts, end_ts, sess_LondonClose_color, sess_LondonClose_color)
+        f_add_box(b)
+
+    // NY AM Killzone: 7–10 AM NY
+    if sess_NY_AMK_enable
+        start_ts = f_ts_for_day(i, 7, 00)
+        end_ts   = f_ts_for_day(i, 10, 00)
+        b = f_create_box(start_ts, end_ts, sess_NY_AMK_color, sess_NY_AMK_color)
+        f_add_box(b)
+
+    // NY PM Killzone: 1–3 PM NY
+    if sess_NY_PMK_enable
+        start_ts = f_ts_for_day(i, 13, 00)
+        end_ts   = f_ts_for_day(i, 15, 00)
+        b = f_create_box(start_ts, end_ts, sess_NY_PMK_color, sess_NY_PMK_color)
+        f_add_box(b)
+
+    // NY Lunch: 11 AM – 1 PM NY
+    if sess_NY_Lunch_enable
+        start_ts = f_ts_for_day(i, 11, 00)
+        end_ts   = f_ts_for_day(i, 13, 00)
+        b = f_create_box(start_ts, end_ts, sess_NY_Lunch_color, sess_NY_Lunch_color)
+        f_add_box(b)
+
+// ---------------------------
+// Legend using table (stable, top-right, professional)
+// Paste this at the end of your script (after session creation)
+// ---------------------------
+// number of possible rows (header + sessions)
+max_rows = 12
+var table legendTable = na
+
+// Build texts and colors for active sessions
+var string[] rowsText = array.new_string()
+var color[]  rowsColor = array.new_color()
+
+// Helper to push a row
+f_push_row(_txt, _col) =>
+    array.push(rowsText, _txt)
+    array.push(rowsColor, _col)
+
+// Prepare legend content (only once per barstate.islast)
+if barstate.islast
+    // reset arrays
+    array.clear(rowsText)
+    array.clear(rowsColor)
+
+    // Header
+    f_push_row("📊 Institutional Windows (NY → Local)", color.new(color.black, 0))
+
+    // Each session: push text and use the same color used for boxes
+    if sess_SB_AM_enable
+        f_push_row("🔴 Silver Bullet AM (10–11 AM NY)", sess_SB_AM_color)
+    if sess_SB_PM_enable
+        f_push_row("🟠 Silver Bullet PM (2–3 PM NY)", sess_SB_PM_color)
+    if sess_LondonSB_enable
+        f_push_row("🟣 London SB (3–4 AM NY)", sess_LondonSB_color)
+    if sess_EquityOpen_enable
+        f_push_row("⚪ Equity Open (9:30 AM NY)", sess_EquityOpen_color)
+    if sess_AsianRange_enable
+        f_push_row("🟢 Asian Range (8 PM–12 AM NY)", sess_AsianRange_color)
+    if sess_LondonKill_enable
+        f_push_row("🔵 London Killzone (2–5 AM NY)", sess_LondonKill_color)
+    if sess_LondonClose_enable
+        f_push_row("🟣 London Close (10–11 AM NY)", sess_LondonClose_color)
+    if sess_NY_AMK_enable
+        f_push_row("🟡 NY AM Kill (7–10 AM NY)", sess_NY_AMK_color)
+    if sess_NY_PMK_enable
+        f_push_row("🟠 NY PM Kill (1–3 PM NY)", sess_NY_PMK_color)
+    if sess_NY_Lunch_enable
+        f_push_row("⚫ NY Lunch (11 AM–1 PM NY)", sess_NY_Lunch_color)
+
+    // Footer / info
+    f_push_row("📅 Displayed: Today + " + str.tostring(showPastDays) + " past days", color.new(color.black, 0))
+
+    // Create table once
+    if na(legendTable)
+        legendTable := table.new(position.top_right, 1, max_rows, border_width = 1)
+
+    // Clear table cells visually: fill with empty rows first
+    for r = 0 to max_rows - 1
+        table.cell(legendTable, 0, r, "", text_color = color.white, bgcolor = color.new(color.black, 100))
+
+    // Write rows (limit to max_rows)
+    items = array.size(rowsText)
+    rows_to_show = math.min(items, max_rows)
+    for i = 0 to rows_to_show - 1
+        txt = array.get(rowsText, i)
+        col = array.get(rowsColor, i)
+        // Use a slightly opaque background matching the session color for row (header uses black)
+        bg = i == 0 ? color.new(color.black, 60) : color.new(col, 60)
+        // For better contrast, choose white/black text based on bg alpha
+        textcol = color.white
+        table.cell(legendTable, 0, i, txt, text_color = textcol, bgcolor = bg, text_halign = text.align_left)
+
